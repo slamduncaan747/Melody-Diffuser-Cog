@@ -36,11 +36,14 @@ class Predictor(BasePredictor):
         self.seq_len = 64
         self.vocab_size = 130
         self.diffusion_steps = 64
-
-        # --- 1. Initialize the Model Architecture ---
-        # NOTE: If your MelodyDiffusor class takes arguments (like vocab_size), 
-        # add them inside the parentheses below. e.g. MelodyDiffusor(vocab_size=130)
-        self.model = MelodyDiffusor() 
+        self.model = MelodyDiffusor(
+            vocab_size=self.vocab_size,
+            seq_len=self.seq_len,
+            dim=512,            # <--- CHECK THIS (Likely 128, 256, or 512)
+            n_layers=6,         # <--- CHECK THIS (Likely 4, 6, or 8)
+            n_heads=8,          # <--- CHECK THIS (Likely 4 or 8)
+            ffn_inner_dim=2048  # <--- CHECK THIS (Usually 4x dim, e.g. 2048 or 1024)
+        )
 
         # --- 2. Download Weights ---
         weights_url = "https://huggingface.co/DuncanLarz/Melody-Diffuser/resolve/main/BetterDiffuser.pth"
@@ -51,9 +54,7 @@ class Predictor(BasePredictor):
             urllib.request.urlretrieve(weights_url, local_weights_path)
 
         # --- 3. Load Weights into Model ---
-        # Load the dictionary of numbers
         state_dict = torch.load(local_weights_path, map_location=self.device)
-        # Pour the numbers into the model structure
         self.model.load_state_dict(state_dict)
         
         # Move to GPU and set to evaluation mode
@@ -63,7 +64,6 @@ class Predictor(BasePredictor):
         print("Model loaded successfully!")
 
         # --- 4. Precompute Diffusion Schedule ---
-        # This is required because your _sample function uses self.alpha_cum
         betas = get_betas(1e-4, 0.02, self.diffusion_steps).to(self.device)
         alphas = 1 - betas
         alphas_cumprod = torch.cumprod(alphas, dim=0)
