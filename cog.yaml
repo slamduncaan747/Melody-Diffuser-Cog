@@ -1,0 +1,8 @@
+build:
+  python_version: "3.11"
+  gpu: true
+  python_packages:
+    - "torch==2.1.0"
+    - "numpy>=1.24.0"
+
+predict: "predict.py:Predictor"
