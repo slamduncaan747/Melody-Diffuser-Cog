@@ -8,71 +8,84 @@ from cog import BasePredictor, Input
 import torch
 import numpy as np
 from typing import List
-from model import MelodyDiffusor
+import os
+import urllib.request
 
-# Diffusion utilities (inlined to avoid extra files)
+# Import your model class
+# Make sure model.py is in the same folder as this script
+from model import MelodyDiffusor 
+
+# --- Helper Functions ---
 def get_betas(start, end, steps):
     return torch.linspace(start, end, steps)
 
 def add_noise(x, noise_prob, vocab_size):
     """Add discrete noise by randomly replacing tokens."""
+    # Ensure noise_prob matches x dimensions
     noise_prob = noise_prob.expand_as(x.float())
     mask = torch.rand_like(x.float()) < noise_prob
     random_tokens = torch.randint_like(x, 0, vocab_size)
     return torch.where(mask, random_tokens, x)
 
-
 class Predictor(BasePredictor):
     def setup(self):
+        """Load the model into memory to make running multiple predictions efficient"""
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
 
-        
-        # 1. Define where the file lives on the internet
-        weights_url = "https://huggingface.co/DuncanLarz/Melody-Diffuser/resolve/main/BetterDiffuser.pth" 
-        
-        # 2. Define where to save it temporarily
-        local_weights_path = "./model.pth"
-        
-        # 3. Download it if we don't have it yet
-        import os
-        if not os.path.exists(local_weights_path):
-            print("Downloading weights...")
-            import urllib.request
-            urllib.request.urlretrieve(weights_url, local_weights_path)
-            
-        # 4. Load it
-        self.model = torch.load(local_weights_path, map_location=self.device)
+        # --- Constants ---
         self.seq_len = 64
         self.vocab_size = 130
-        self.temperature = 1.0
-        self.top_p = 0.95
         self.diffusion_steps = 64
-        self.use_cfg = True
-        self.cfg_scale = 2.0
+
+        # --- 1. Initialize the Model Architecture ---
+        # NOTE: If your MelodyDiffusor class takes arguments (like vocab_size), 
+        # add them inside the parentheses below. e.g. MelodyDiffusor(vocab_size=130)
+        self.model = MelodyDiffusor() 
+
+        # --- 2. Download Weights ---
+        weights_url = "https://huggingface.co/DuncanLarz/Melody-Diffuser/resolve/main/BetterDiffuser.pth"
+        local_weights_path = "./model.pth"
+        
+        if not os.path.exists(local_weights_path):
+            print(f"Downloading weights from {weights_url}...")
+            urllib.request.urlretrieve(weights_url, local_weights_path)
+
+        # --- 3. Load Weights into Model ---
+        # Load the dictionary of numbers
+        state_dict = torch.load(local_weights_path, map_location=self.device)
+        # Pour the numbers into the model structure
+        self.model.load_state_dict(state_dict)
+        
+        # Move to GPU and set to evaluation mode
+        self.model.to(self.device)
+        self.model.eval()
+        
+        print("Model loaded successfully!")
+
+        # --- 4. Precompute Diffusion Schedule ---
+        # This is required because your _sample function uses self.alpha_cum
+        betas = get_betas(1e-4, 0.02, self.diffusion_steps).to(self.device)
+        alphas = 1 - betas
+        alphas_cumprod = torch.cumprod(alphas, dim=0)
+        self.alpha_cum = alphas_cumprod.to(self.device)
 
     def predict(
         self,
         gestures: str = Input(
-            description="Comma-separated gesture tokens (64 integers, each 0-7). Example: '0,2,3,4,0,0,5,6,...'",
+            description="Comma-separated gesture tokens (64 integers, each 0-7). Example: '0,2,3,4...'",
             default="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0"
         ),
         temperature: float = Input(
             description="Sampling temperature (higher = more random)",
-            default=1.0,
-            ge=0.1,
-            le=2.0
+            default=1.0, ge=0.1, le=2.0
         ),
         top_p: float = Input(
             description="Nucleus sampling threshold",
-            default=0.95,
-            ge=0.1,
-            le=1.0
+            default=0.95, ge=0.1, le=1.0
         ),
         cfg_scale: float = Input(
             description="Classifier-free guidance scale (higher = more adherence to gestures)",
-            default=2.0,
-            ge=1.0,
-            le=5.0
+            default=2.0, ge=1.0, le=5.0
         ),
         use_cfg: bool = Input(
             description="Whether to use classifier-free guidance",
@@ -81,9 +94,7 @@ class Predictor(BasePredictor):
     ) -> str:
         """
         Generate a melody from gesture conditioning.
-        
         Returns: Comma-separated MIDI tokens (64 integers).
-                 0-127 = MIDI pitch, 128 = hold, 129 = rest
         """
         # Parse gesture input
         try:
@@ -91,7 +102,7 @@ class Predictor(BasePredictor):
         except ValueError:
             raise ValueError("Gestures must be comma-separated integers (0-7)")
         
-        # Validate
+        # Validate input length
         if len(gesture_list) != 64:
             raise ValueError(f"Expected 64 gesture tokens, got {len(gesture_list)}")
         
@@ -101,7 +112,7 @@ class Predictor(BasePredictor):
         # Convert to tensor
         cond_tensor = torch.tensor(gesture_list, dtype=torch.long).unsqueeze(0).to(self.device)
         
-        # Sample
+        # Run Sampling
         melody = self._sample(
             cond_tensor,
             temperature=temperature,
@@ -110,7 +121,7 @@ class Predictor(BasePredictor):
             use_cfg=use_cfg
         )
         
-        # Return as comma-separated string
+        # Return as string
         return ",".join(str(int(x)) for x in melody)
     
     def _sample(self, cond, temperature, top_p, cfg_scale, use_cfg):
@@ -140,7 +151,10 @@ class Predictor(BasePredictor):
             mask[..., 1:] = mask[..., :-1].clone()
             mask[..., 0] = False
             sorted_probs[mask] = 0
-            sorted_probs = sorted_probs / sorted_probs.sum(dim=-1, keepdim=True)
+            
+            # Avoid division by zero if all probs are masked (rare)
+            sum_probs = sorted_probs.sum(dim=-1, keepdim=True)
+            sorted_probs = sorted_probs / (sum_probs + 1e-8)
             
             # Restore order and sample
             orig_probs = torch.zeros_like(sorted_probs)
@@ -151,7 +165,7 @@ class Predictor(BasePredictor):
                 x = x_0_pred
                 break
             
-            # Add noise for next step
+            # Add noise for next step using precomputed alpha_cum
             noise_prob = (1 - self.alpha_cum[t-1]).view(-1, 1)
             x = add_noise(x_0_pred, noise_prob, self.vocab_size)
         
