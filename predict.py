@@ -24,34 +24,23 @@ def add_noise(x, noise_prob, vocab_size):
 
 class Predictor(BasePredictor):
     def setup(self):
-        """Load model weights - runs once when container starts."""
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
         
-        # Model config (must match training)
-        self.vocab_size = 130
-        self.seq_len = 64
-        self.diffusion_steps = 64
+        # 1. Define where the file lives on the internet
+        weights_url = "https://huggingface.co/DuncanLarz/Melody-Diffuser/resolve/main/BetterDiffuser.pth" 
         
-        # Load model
-        self.model = MelodyDiffusor(
-            vocab_size=self.vocab_size,
-            seq_len=self.seq_len,
-            dim=512,
-            n_layers=6,
-            n_heads=8,
-            ffn_inner_dim=2048,
-            dropout=0.1
-        ).to(self.device)
+        # 2. Define where to save it temporarily
+        local_weights_path = "./model.pth"
         
-        self.model.load_state_dict(torch.load("checkpoint.pth", map_location=self.device))
-        self.model.eval()
-        
-        # Precompute diffusion schedule
-        betas = get_betas(1e-4, 0.05, self.diffusion_steps).to(self.device)
-        alphas = 1 - betas
-        self.alpha_cum = torch.cumprod(alphas, dim=0)
-        
-        print("Model loaded successfully!")
+        # 3. Download it if we don't have it yet
+        import os
+        if not os.path.exists(local_weights_path):
+            print("Downloading weights...")
+            import urllib.request
+            urllib.request.urlretrieve(weights_url, local_weights_path)
+            
+        # 4. Load it
+        self.model = torch.load(local_weights_path, map_location=self.device)
 
     def predict(
         self,
