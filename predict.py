@@ -25,6 +25,7 @@ def add_noise(x, noise_prob, vocab_size):
 class Predictor(BasePredictor):
     def setup(self):
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
+
         
         # 1. Define where the file lives on the internet
         weights_url = "https://huggingface.co/DuncanLarz/Melody-Diffuser/resolve/main/BetterDiffuser.pth" 
@@ -41,6 +42,13 @@ class Predictor(BasePredictor):
             
         # 4. Load it
         self.model = torch.load(local_weights_path, map_location=self.device)
+        self.seq_len = 64
+        self.vocab_size = 130
+        self.temperature = 1.0
+        self.top_p = 0.95
+        self.diffusion_steps = 64
+        self.use_cfg = True
+        self.cfg_scale = 2.0
 
     def predict(
         self,
