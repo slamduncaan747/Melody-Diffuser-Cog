@@ -1,4 +1,4 @@
-"""
+-"""
 Melody Diffuser - Replicate Predictor
 =====================================
 Wraps the diffusion model for Replicate API deployment.
@@ -46,7 +46,7 @@ class Predictor(BasePredictor):
         )
 
         # --- 2. Download Weights ---
-        weights_url = "https://huggingface.co/DuncanLarz/Melody-Diffuser/resolve/main/Melody Diffuser.pth"
+        weights_url = "https://huggingface.co/DuncanLarz/Melody-Diffuser/resolve/main/Best-Melody-Diffuser.pth"
         local_weights_path = "./model.pth"
         
         if not os.path.exists(local_weights_path):
